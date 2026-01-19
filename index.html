@@ -71,9 +71,10 @@
 
   <!-- jsPDF + svg2pdf（把 SVG 写入 PDF） -->
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/canvg/3.0.10/umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.plugin.svg.min.js"></script>
+
 
 
   <script>
@@ -208,11 +209,9 @@ async function downloadPdf(){
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
   try {
-    // 主方案：SVG -> PDF（矢量/高质量）
     await doc.svg(svgEl, { x: 0, y: 0, width: 210, height: 297 });
     doc.save("sundial_a4.pdf");
   } catch (e) {
-    // 兜底：走浏览器打印（用户可“另存为 PDF”），保证可用
     console.error("SVG->PDF failed, fallback to print:", e);
 
     const w = window.open("", "_blank");
@@ -237,6 +236,7 @@ async function downloadPdf(){
     w.print();
   }
 }
+
 
 
 
