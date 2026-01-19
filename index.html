@@ -71,7 +71,8 @@
 
   <!-- jsPDF + svg2pdf（把 SVG 写入 PDF） -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.min.js"></script>
+
 
   <script>
     const A4_W_MM = 210;
@@ -197,19 +198,19 @@
       document.getElementById("paper").innerHTML = svg;
     }
 
-    async function downloadPdf(){
-      render();
-      const svgEl = document.getElementById("dialSvg");
-      const { jsPDF } = window.jspdf;
+async function downloadPdf(){
+  render();
+  const svgEl = document.getElementById("dialSvg");
+  const { jsPDF } = window.jspdf;
 
-      // A4，单位 mm
-      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
-      // svg2pdf：把 SVG 内容写入 PDF
-      await window.svg2pdf(svgEl, doc, { xOffset: 0, yOffset: 0, scale: 1 });
+  // 用 jsPDF 的 svg()（内部对接 svg2pdf），更稳
+  await doc.svg(svgEl, { x: 0, y: 0, width: 210, height: 297 });
 
-      doc.save("sundial_a4.pdf");
-    }
+  doc.save("sundial_a4.pdf");
+}
+
 
     document.getElementById("btnRender").addEventListener("click", render);
     document.getElementById("btnPdf").addEventListener("click", downloadPdf);
