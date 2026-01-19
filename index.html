@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>可打印日晷刻度线（A4 PDF）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans", Arial; margin: 24px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; }
+    label { display: block; font-size: 14px; margin-bottom: 6px; }
+    input, select, button { font-size: 14px; padding: 8px 10px; }
+    button { cursor: pointer; }
+    .panel { margin-top: 16px; display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; }
+    .hint { font-size: 12px; color: #555; line-height: 1.5; }
+    .preview-wrap { overflow: auto; border: 1px solid #ddd; border-radius: 10px; padding: 10px; background: #fafafa; }
+    /* 让预览接近纸张比例 */
+    .a4 { width: 420px; height: 594px; background: white; box-shadow: 0 2px 14px rgba(0,0,0,.08); margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <h2>可打印日晷刻度线生成器（A4 PDF）</h2>
+
+  <div class="row card">
+    <div>
+      <label>地理纬度 L（度，北纬为正；南纬为负）</label>
+      <input id="lat" type="number" step="0.01" value="39.90" style="width: 220px" />
+    </div>
+
+    <div>
+      <label>类型</label>
+      <select id="dialType">
+        <option value="horizontal">地平式（水平日晷）</option>
+        <option value="vertical">垂直式（正南向垂直日晷）</option>
+      </select>
+    </div>
+
+    <div>
+      <label>显示小时范围</label>
+      <select id="range">
+        <option value="6">6–18（常用）</option>
+        <option value="5">5–19</option>
+        <option value="4">4–20</option>
+      </select>
+    </div>
+
+    <div>
+      <button id="btnRender">生成预览</button>
+      <button id="btnPdf">下载 A4 PDF</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card hint">
+      <div style="font-weight:600; margin-bottom:8px;">使用说明（关键但不啰嗦）</div>
+      <ol style="margin: 0 0 0 18px; padding: 0;">
+        <li>本页生成的是“刻线模板”（A4 矢量图），你打印后可贴在底板上。</li>
+        <li>晷针（style）需指向真北/真南且与地平夹角等于纬度。</li>
+        <li>这里生成的是“视太阳时”刻线；若要对齐钟表时间，还需做经度/时区与均时差修正。</li>
+      </ol>
+      <div style="margin-top:10px;">
+        <div style="font-weight:600;">刻线角公式来源</div>
+        <div>水平日晷与正南向垂直日晷刻线角公式见维基百科“日晷”条目。 </div>
+      </div>
+    </div>
+
+    <div class="preview-wrap">
+      <div class="a4" id="paper"></div>
+    </div>
+  </div>
+
+  <!-- jsPDF + svg2pdf（把 SVG 写入 PDF） -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
+
+  <script>
+    const A4_W_MM = 210;
+    const A4_H_MM = 297;
+
+    function deg2rad(d) { return d * Math.PI / 180; }
+    function rad2deg(r) { return r * 180 / Math.PI; }
+
+    function clampLat(lat){
+      // 避免 cos/sin 极端导致刻线数值爆炸
+      if (lat > 89.9) return 89.9;
+      if (lat < -89.9) return -89.9;
+      return lat;
+    }
+
+    // 计算某小时线相对“正午线”的夹角（度）
+    // t: 相对正午小时数（如 13:00 => +1；11:00 => -1）
+    function hourAngleDeg(lat, dialType, t){
+      const L = deg2rad(lat);
+      const H = deg2rad(15 * t); // 时角
+      let tanTheta;
+      if (dialType === "horizontal"){
+        // tan(H_H) = sin(L) * tan(15° t)
+        tanTheta = Math.sin(L) * Math.tan(H);
+      } else {
+        // tan(H_V) = cos(L) * tan(15° t)  （正南向垂直日晷）
+        tanTheta = Math.cos(L) * Math.tan(H);
+      }
+      const theta = Math.atan(tanTheta);
+      return rad2deg(theta);
+    }
+
+    function makeSvg(lat, dialType, hourMin, hourMax){
+      // A4 画布：用 mm 作为单位，打印更直观
+      const margin = 12;                 // mm
+      const cx = A4_W_MM / 2;
+      const cy = A4_H_MM / 2 + 10;       // 稍微下移，留标题区
+      const R  = Math.min(A4_W_MM, A4_H_MM) * 0.40; // 主半径
+
+      const title = dialType === "horizontal" ? "地平式（水平）日晷刻线" : "垂直式（正南向）日晷刻线";
+      const latText = `纬度 L = ${lat.toFixed(2)}°`;
+      const note = "12:00 线为正午线；其余小时线按视太阳时绘制";
+
+      // 生成小时线（不画夜间）
+      let lines = "";
+      let labels = "";
+
+      for (let h = hourMin; h <= hourMax; h++){
+        if (h === 12) continue;
+        const t = h - 12;
+        const theta = hourAngleDeg(lat, dialType, t); // 相对正午线角
+        // 约定：正午线朝“纸张上方”（-Y），正角向右旋转
+        const ang = deg2rad(theta);
+        const x2 = cx + R * Math.sin(ang);
+        const y2 = cy - R * Math.cos(ang);
+
+        lines += `<line x1="${cx}" y1="${cy}" x2="${x2}" y2="${y2}"
+                        stroke="#000" stroke-width="0.35" />`;
+
+        // 标签放在稍远一点
+        const rLab = R + 10;
+        const xl = cx + rLab * Math.sin(ang);
+        const yl = cy - rLab * Math.cos(ang);
+        labels += `<text x="${xl}" y="${yl}" font-size="4" text-anchor="middle" dominant-baseline="middle">${h}</text>`;
+      }
+
+      // 正午线（加粗）
+      const noonX = cx;
+      const noonY = cy - (R + 4);
+      const noonLine = `<line x1="${cx}" y1="${cy}" x2="${noonX}" y2="${noonY}"
+                             stroke="#000" stroke-width="0.7" />`;
+
+      // 外圆（可选：更利于裁剪对齐）
+      const circle = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#000" stroke-width="0.35" />`;
+
+      // 晷针信息（提醒）
+      const styleHint = dialType === "horizontal"
+        ? `晷针与地平夹角应为 ${Math.abs(lat).toFixed(2)}°，指向真北（北半球）/真南（南半球）`
+        : `晷针与“晷面”夹角应为 ${ (90 - Math.abs(lat)).toFixed(2) }°，晷面正对南（北半球）`;
+
+      return `
+        <svg id="dialSvg" xmlns="http://www.w3.org/2000/svg"
+             width="${A4_W_MM}mm" height="${A4_H_MM}mm"
+             viewBox="0 0 ${A4_W_MM} ${A4_H_MM}">
+          <rect x="0" y="0" width="${A4_W_MM}" height="${A4_H_MM}" fill="white"/>
+
+          <!-- 标题区 -->
+          <text x="${margin}" y="${margin}" font-size="6.2" font-weight="600">${title}</text>
+          <text x="${margin}" y="${margin + 7}" font-size="4.5">${latText}</text>
+          <text x="${margin}" y="${margin + 13}" font-size="3.6">${note}</text>
+
+          <!-- 主图 -->
+          ${circle}
+          ${noonLine}
+          ${lines}
+          ${labels}
+
+          <!-- 中心点 -->
+          <circle cx="${cx}" cy="${cy}" r="1.2" fill="#000"/>
+
+          <!-- 说明区 -->
+          <text x="${margin}" y="${A4_H_MM - margin - 10}" font-size="3.6">${styleHint}</text>
+          <text x="${margin}" y="${A4_H_MM - margin - 5}" font-size="3.2">
+            提示：这是视太阳时；要对齐钟表时间需做经度/时区与均时差修正。
+          </text>
+
+          <!-- 裁切/对齐边框（淡） -->
+          <rect x="${margin}" y="${margin}" width="${A4_W_MM - 2*margin}" height="${A4_H_MM - 2*margin}"
+                fill="none" stroke="#999" stroke-width="0.2" stroke-dasharray="1.2 1.2"/>
+        </svg>
+      `;
+    }
+
+    function render(){
+      const latInput = Number(document.getElementById("lat").value);
+      const lat = clampLat(latInput);
+      const dialType = document.getElementById("dialType").value;
+      const rangeOpt = Number(document.getElementById("range").value);
+      const hourMin = 12 - rangeOpt;
+      const hourMax = 12 + rangeOpt;
+
+      const svg = makeSvg(lat, dialType, hourMin, hourMax);
+      document.getElementById("paper").innerHTML = svg;
+    }
+
+    async function downloadPdf(){
+      render();
+      const svgEl = document.getElementById("dialSvg");
+      const { jsPDF } = window.jspdf;
+
+      // A4，单位 mm
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+      // svg2pdf：把 SVG 内容写入 PDF
+      await window.svg2pdf(svgEl, doc, { xOffset: 0, yOffset: 0, scale: 1 });
+
+      doc.save("sundial_a4.pdf");
+    }
+
+    document.getElementById("btnRender").addEventListener("click", render);
+    document.getElementById("btnPdf").addEventListener("click", downloadPdf);
+
+    // 初始渲染
+    render();
+  </script>
+</body>
+</html>
